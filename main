@@ -1,0 +1,13 @@
+#!/usr/bin/env python
+
+import os
+from PIL import Image
+from pylab import *
+
+
+origin = Image.open("huan128.jpg")
+#grep = origin.convert("L")
+
+imshow(origin)
+show()
+
