@@ -1,13 +1,364 @@
 #!/usr/bin/env python
+# -*- coding: UTF-8 -*-
 
-import os
+import sys
+import numpy as np
 from PIL import Image
 from pylab import *
 
 
-origin = Image.open("huan128.jpg")
-#grep = origin.convert("L")
+# for calTransProb
+vector = [[-1,-1], [0,-1], [1,-1], [1,0], [1,1], [0,1], [-1,1], [-1,0]]
 
+def calTransProb(row, col, T, B, vec):
+    """计算单个像素的转移概率"""
+    height, width = T.shape
+    index = row*width + col
+    
+    #deff between center and all around
+    b = np.zeros(8)
+    d = np.zeros(8)
+    for k in vec:
+        d[k] = T[row+vector[k][0]][col+vector[k][1]] - T[row][col] # center pixl 
+        if d[k] > 0: # light
+            b[k] = (256.0 - d[k]) / 6
+        else: # dark
+            b[k] = (256.0 + d[k]) / 3
+    
+    # probability for out
+    bsum = np.sum(b)
+    for k in vec:
+        B[index][index + vector[k][0]*width + vector[k][1]] = b[k] / bsum
+
+
+def calTransMatrix(T):
+    """计算转移概率矩阵"""
+    height, width = T.shape
+    B = np.zeros((T.size, T.size))
+    
+    # calculate transfer matrix
+    for j in range(1, width-1):
+        for i in range(1, height-1):
+            calTransProb(i, j, T, B, range(0,8))
+    
+    i = 0
+    for j in range(1, width-1):
+        calTransProb(i, j, T, B, range(1,6)) # top
+    
+    i = height-1
+    for j in range(1, width-1):
+        calTransProb(i, j, T, B, [5,6,7,0,1]) # bottom
+    
+    j = 0
+    for i in range(1, height-1):
+        calTransProb(i, j, T, B, range(3,8)) # left
+    
+    i = 0;        calTransProb(i, j, T, B, range(3,6)) # left-top
+    i = height-1; calTransProb(i, j, T, B, range(5,8)) # left-bottom
+    
+    j = width-1
+    for i in range(1, height-1):
+        calTransProb(i, j, T, B, [7,0,1,2,3]) # right
+    
+    i = 0;        calTransProb(i, j, T, B, range(1,4)) # right-top
+    i = height-1; calTransProb(i, j, T, B, [7,0,1])    # right-bottom
+    
+    return B
+
+
+def mutipleTrans(M, B, shape):
+    """矩阵乘法优化"""
+    height, width = shape
+    t = np.zeros_like(M)
+    
+    for j in range(1, width-1):
+        for i in range(1, height-1):
+            index = i*width+j
+            for k in range(0,8):
+                aindex = index + vector[k][0]*width + vector[k][1]
+                t[index] += M[aindex] * B[aindex][index]
+    
+    i = 0
+    for j in range(1, width-1):
+        index = i*width+j
+        for k in range(1,6): # top
+            aindex = index + vector[k][0]*width + vector[k][1]
+            t[index] += M[aindex] * B[aindex][index]
+    
+    i = height-1
+    for j in range(1, width-1):
+        index = i*width+j
+        for k in [5,6,7,0,1]: # bottom
+            aindex = index + vector[k][0]*width + vector[k][1]
+            t[index] += M[aindex] * B[aindex][index]
+    
+    j = 0; 
+    for i in range(1, height-1):
+        index = i*width+j
+        for k in range(3,8): # left
+            aindex = index + vector[k][0]*width + vector[k][1]
+            t[index] += M[aindex] * B[aindex][index]
+    
+    i = 0
+    index = i*width+j
+    for k in range(3,6): # left-top
+        aindex = index + vector[k][0]*width + vector[k][1]
+        t[index] += M[aindex] * B[aindex][index]
+    
+    i = height-1
+    index = i*width+j
+    for k in range(5,8): # left-bottom
+        aindex = index + vector[k][0]*width + vector[k][1]
+        t[index] += M[aindex] * B[aindex][index]
+    
+    j = width-1
+    for i in range(1, height-1):
+        index = i*width+j
+        for k in [7,0,1,2,3]: # right
+            aindex = index + vector[k][0]*width + vector[k][1]
+            t[index] += M[aindex] * B[aindex][index]
+    
+    i = 0
+    index = i*width+j
+    for k in range(1,4): # right-top
+        aindex = index + vector[k][0]*width + vector[k][1]
+        t[index] += M[aindex] * B[aindex][index]
+    
+    i = height-1
+    index = i*width+j
+    for k in [7,0,1]:    # right-bottom
+        aindex = index + vector[k][0]*width + vector[k][1]
+        t[index] += M[aindex] * B[aindex][index]
+    
+    return t
+
+
+def gaussianFilter(G):
+    height, width = G.shape
+	
+    sigma = 0.4
+    windowSize = 1 + 2 * np.int(np.ceil(3*sigma))
+    center = windowSize // 2
+    
+    kernal2 = np.zeros((windowSize, windowSize))
+    sum2 = 0.0
+    
+    for i in range(windowSize):
+        for j in range(windowSize):
+            disX = i - center
+            disY = j - center
+            kernal2[j][i] = np.exp(-0.5 * (disX**2 + disY**2) / (sigma**2) / (2*np.pi*(sigma**2)))
+            sum2 += kernal2[j][i]
+            
+    for i in range(windowSize):
+        for j in range(windowSize):
+            kernal2[j][i] /= sum2
+    
+    T = np.zeros_like(G)
+    for row in range(height):
+        for col in range(width):
+            filter = 0.0
+            sum = 0.0
+            for x in range(-center, center+1):
+                for y in range(-center, center+1):
+                    if 0<=(col+x)<width and 0<=(row+y)<height:
+                        filter += double(G[row+y][col+x] * kernal2[y+center][x+center])
+                        sum += kernal2[y+center][x+center]
+            
+            T[row][col] = filter/sum
+    
+    return T
+
+
+def canny(G):
+    """Canny 边缘检测（没有高斯滤波过程）"""
+    height, width = G.shape
+    
+    # Step 1
+    P = np.zeros_like(G) # gradient in x
+    Q = np.zeros_like(G) # gradient in y
+    M = np.zeros_like(G, dtype='i') # gradient
+    Theta = np.zeros_like(G) # direction
+    
+    for row in range(height-1):
+        for col in range(width-1):
+            P[row][col] = (G[row][col+1]-G[row][col] + G[row+1][col+1]-G[row+1][col]) / 2.0
+            Q[row][col] = (G[row][col]-G[row+1][col] + G[row][col+1]-G[row+1][col+1]) / 2.0
+    
+    for row in range(height):
+        for col in range(width):
+            M[row][col] = np.int(np.sqrt(P[row][col]**2 + Q[row][col]**2 + 0.5))
+            Theta[row][col] = np.rad2deg(np.arctan2(Q[row][col], P[row][col]))
+            if Theta[row][col] < 0:
+                Theta[row][col] += 360
+    
+    # Step 2
+    N = np.zeros_like(G, dtype=np.uint8)
+    for col in range(1, width-1):
+        for row in range(1, height-1):
+            if M[row][col] == 0:
+                N[row][col] = 0
+            else:
+                tmp1 = 0.0; tmp2 = 0.0
+                if (90<=Theta[row][col]<135) or (270<=Theta[row][col]<315):
+                    #  g1 g2
+                    #     c
+                    #     g3 g4
+                    g1 = M[row-1][col-1]
+                    g2 = M[row-1][col]
+                    g3 = M[row+1][col]
+                    g4 = M[row+1][col+1]
+                    weight = np.fabs(P[row][col] / Q[row][col])
+                    tmp1 = g1*weight + g2*(1-weight)
+                    tmp2 = g4*weight + g3*(1-weight)
+                elif (135<=Theta[row][col]<180) or (315<=Theta[row][col]<360):
+                    #  g1
+                    #  g2 c g3
+                    #       g4
+                    g1 = M[row-1][col-1]
+                    g2 = M[row][col-1]
+                    g3 = M[row][col+1]
+                    g4 = M[row+1][col+1]
+                    weight = np.fabs(Q[row][col] / P[row][col])
+                    tmp1 = g2*weight + g1*(1-weight)
+                    tmp2 = g4*weight + g3*(1-weight)
+                elif (45<=Theta[row][col]<90) or (225<=Theta[row][col]<270):
+                    #     g2 g1
+                    #     c
+                    #  g4 g3
+                    g1 = M[row-1][col+1]
+                    g2 = M[row-1][col]
+                    g3 = M[row+1][col]
+                    g4 = M[row+1][col-1]
+                    weight = np.fabs(P[row][col] / Q[row][col])
+                    tmp1 = g1*weight + g2*(1-weight)
+                    tmp2 = g3*weight + g4*(1-weight)
+                elif (0<=Theta[row][col]<45) or (180<=Theta[row][col]<225):
+                    #       g1
+                    #  g3 c g2
+                    #  g4
+                    g1 = M[row-1][col+1]
+                    g2 = M[row][col+1]
+                    g3 = M[row][col-1]
+                    g4 = M[row+1][col-1]
+                    weight = np.fabs(Q[row][col] / P[row][col])
+                    tmp1 = g1*weight + g2*(1-weight)
+                    tmp2 = g4*weight + g3*(1-weight)
+                
+                if M[row][col]>=tmp1 and M[row][col]>=tmp2:
+                    N[row][col] = 128
+                else:
+                    N[row][col] = 0
+    
+    # Step 3
+    hist = np.zeros(400, dtype='i')
+    for row in range(height):
+        for col in range(width):
+            if N[row][col] == 128:
+                hist[M[row][col]] += 1
+    
+    for i in range(len(hist)):
+        print("%d : %d" % (i, hist[i]))
+    
+    maxMag = 0  # the number of biggest gradient
+    edgeNum = hist[0]
+    for i in range(1, len(hist)):
+        if hist[i] != 0:
+            maxMag = i
+        edgeNum += hist[i]
+
+    # Step 4
+    ratHigh = 0.79
+    ratLow = 0.6
+    highCount = np.int(ratHigh*edgeNum + 0.5)
+    j = 1
+    edgeNum = hist[1]
+    while j<(maxMag-1) and edgeNum<highCount:
+        j += 1
+        edgeNum += hist[j]
+    thrHigh = j
+    thrLow = np.int(thrHigh*ratLow + 0.5)
+    # print("thrHigh is %f; thrLow is %f" % (thrHigh, thrLow))
+    
+    # Step 5
+    for row in range(height):
+        for col in range(width):
+            if N[row][col]==128 and M[row][col]>=thrHigh:
+                N[row][col] = 255
+                traceEdge(row, col, thrLow, N, M)
+    
+    # Step 6
+    for row in range(height):
+        for col in range(width):
+            if N[row][col] != 255:
+                N[row][col] = 0
+    
+    return N
+
+
+def traceEdge(row, col, thrLow, N, M):
+    """连接边缘"""
+    for k in range(8):
+        y = row + vector[k][0]
+        x = col + vector[k][1]
+        if N[y][x]==128 and M[y][x]>=thrLow:
+            N[y][x] = 255
+            traceEdge(y, x, thrLow, N, M)
+
+
+origin = Image.open("huan128.jpg")
+A = origin.convert("L") # convert origin image to grey-scale map
+
+T = np.array(A, dtype='d')
+
+B = calTransMatrix(T)
+M = np.array([1.0] * T.size)
+
+g = 100
+if len(sys.argv) > 1:
+    g = int(sys.argv[1])
+print("g is %d" % (g))
+
+for k in range(g):
+    M = mutipleTrans(M, B, T.shape)
+
+tmax = np.max(M)
+tmin = np.min(M)
+tsum = np.sum(M)
+print("max is %f; min is %f; sum is %f" % (tmax, tmin, tsum))
+
+M = (M - tmin) * (255 / (tmax - tmin))
+M = M.reshape(T.shape)
+edge = canny(M)
+
+gauss = gaussianFilter(M)
+edgeG = canny(gauss)
+
+
+# show image
+subplot(231)
+title('origin image')
 imshow(origin)
+
+subplot(234)
+title('grey-scale map')
+imshow(A)
+
+subplot(232)
+title('random walk')
+imshow(M)
+
+subplot(235)
+title('gaussian filter')
+imshow(gauss)
+
+subplot(233)
+title('random edge')
+imshow(edge)
+
+subplot(236)
+title('gaussian edge')
+imshow(edgeG)
+
 show()
 
