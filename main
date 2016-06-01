@@ -1,10 +1,13 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- coding: UTF-8 -*-
 
 import sys
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from mpl_toolkits.mplot3d import Axes3D
+from skimage import feature, dtype_limits
 from PIL import Image
-from pylab import *
 
 
 # for calTransProb
@@ -135,7 +138,7 @@ def mutipleTrans(M, B, shape):
 
 def gaussianFilter(G):
     height, width = G.shape
-	
+    
     sigma = 0.4
     windowSize = 1 + 2 * np.int(np.ceil(3*sigma))
     center = windowSize // 2
@@ -149,7 +152,7 @@ def gaussianFilter(G):
             disY = j - center
             kernal2[j][i] = np.exp(-0.5 * (disX**2 + disY**2) / (sigma**2) / (2*np.pi*(sigma**2)))
             sum2 += kernal2[j][i]
-            
+    
     for i in range(windowSize):
         for j in range(windowSize):
             kernal2[j][i] /= sum2
@@ -177,7 +180,7 @@ def canny(G):
     # Step 1
     P = np.zeros_like(G) # gradient in x
     Q = np.zeros_like(G) # gradient in y
-    M = np.zeros_like(G, dtype='i') # gradient
+    M = np.zeros_like(G, dtype=np.int) # gradient
     Theta = np.zeros_like(G) # direction
     
     for row in range(height-1):
@@ -209,8 +212,6 @@ def canny(G):
                     g3 = M[row+1][col]
                     g4 = M[row+1][col+1]
                     weight = np.fabs(P[row][col] / Q[row][col])
-                    tmp1 = g1*weight + g2*(1-weight)
-                    tmp2 = g4*weight + g3*(1-weight)
                 elif (135<=Theta[row][col]<180) or (315<=Theta[row][col]<360):
                     #  g1
                     #  g2 c g3
@@ -220,8 +221,6 @@ def canny(G):
                     g3 = M[row][col+1]
                     g4 = M[row+1][col+1]
                     weight = np.fabs(Q[row][col] / P[row][col])
-                    tmp1 = g2*weight + g1*(1-weight)
-                    tmp2 = g4*weight + g3*(1-weight)
                 elif (45<=Theta[row][col]<90) or (225<=Theta[row][col]<270):
                     #     g2 g1
                     #     c
@@ -231,8 +230,6 @@ def canny(G):
                     g3 = M[row+1][col]
                     g4 = M[row+1][col-1]
                     weight = np.fabs(P[row][col] / Q[row][col])
-                    tmp1 = g1*weight + g2*(1-weight)
-                    tmp2 = g3*weight + g4*(1-weight)
                 elif (0<=Theta[row][col]<45) or (180<=Theta[row][col]<225):
                     #       g1
                     #  g3 c g2
@@ -242,52 +239,50 @@ def canny(G):
                     g3 = M[row][col-1]
                     g4 = M[row+1][col-1]
                     weight = np.fabs(Q[row][col] / P[row][col])
-                    tmp1 = g1*weight + g2*(1-weight)
-                    tmp2 = g4*weight + g3*(1-weight)
                 
+                tmp1 = g1*weight + g2*(1-weight)
+                tmp2 = g4*weight + g3*(1-weight)
                 if M[row][col]>=tmp1 and M[row][col]>=tmp2:
                     N[row][col] = 128
                 else:
                     N[row][col] = 0
     
     # Step 3
-    hist = np.zeros(400, dtype='i')
+    ratHigh = 0.79
+    ratLow = 0.5
+
+    hist = np.zeros(500, dtype='i')
     for row in range(height):
         for col in range(width):
             if N[row][col] == 128:
                 hist[M[row][col]] += 1
     
+    edgeNum = 0
+    maxMag = 0
     for i in range(len(hist)):
-        print("%d : %d" % (i, hist[i]))
-    
-    maxMag = 0  # the number of biggest gradient
-    edgeNum = hist[0]
-    for i in range(1, len(hist)):
-        if hist[i] != 0:
+        if hist[i] > 0:
             maxMag = i
-        edgeNum += hist[i]
-
-    # Step 4
-    ratHigh = 0.79
-    ratLow = 0.6
-    highCount = np.int(ratHigh*edgeNum + 0.5)
-    j = 1
+        edgeNum += 1
+    
+    highCount = np.int(ratHigh * edgeNum + 0.5)
     edgeNum = hist[1]
-    while j<(maxMag-1) and edgeNum<highCount:
-        j += 1
-        edgeNum += hist[j]
-    thrHigh = j
-    thrLow = np.int(thrHigh*ratLow + 0.5)
+    k = 1
+    while k<maxMag-1 and edgeNum<highCount:
+        k += 1
+        edgeNum += hist[k]
+    
+    thrHigh = k
+    thrLow = np.int(thrHigh * ratLow + 0.5)
     # print("thrHigh is %f; thrLow is %f" % (thrHigh, thrLow))
     
-    # Step 5
+    # Step 4
     for row in range(height):
         for col in range(width):
             if N[row][col]==128 and M[row][col]>=thrHigh:
                 N[row][col] = 255
                 traceEdge(row, col, thrLow, N, M)
     
-    # Step 6
+    # Step 5
     for row in range(height):
         for col in range(width):
             if N[row][col] != 255:
@@ -301,9 +296,13 @@ def traceEdge(row, col, thrLow, N, M):
     for k in range(8):
         y = row + vector[k][0]
         x = col + vector[k][1]
-        if N[y][x]==128 and M[y][x]>=thrLow:
+        if 0<=y<N.shape[0] and 0<=x<N.shape[1] and N[y][x]==128 and M[y][x]>=thrLow:
             N[y][x] = 255
             traceEdge(y, x, thrLow, N, M)
+
+
+def fixCircle(G):
+    pass
 
 
 origin = Image.open("huan128.jpg")
@@ -327,38 +326,42 @@ tmin = np.min(M)
 tsum = np.sum(M)
 print("max is %f; min is %f; sum is %f" % (tmax, tmin, tsum))
 
-M = (M - tmin) * (255 / (tmax - tmin))
 M = M.reshape(T.shape)
-edge = canny(M)
 
-gauss = gaussianFilter(M)
-edgeG = canny(gauss)
+edgeM = feature.canny(M)
+edgeO = feature.canny(T)
 
 
 # show image
-subplot(231)
-title('origin image')
-imshow(origin)
+fig = plt.figure()
 
-subplot(234)
-title('grey-scale map')
-imshow(A)
+plt.subplot(231)
+plt.title('origin image')
+plt.imshow(origin)
 
-subplot(232)
-title('random walk')
-imshow(M)
+plt.subplot(232)
+plt.title('grey-scale map')
+plt.imshow(A)
 
-subplot(235)
-title('gaussian filter')
-imshow(gauss)
+plt.subplot(233)
+plt.title('origin edge')
+plt.imshow(edgeO)
 
-subplot(233)
-title('random edge')
-imshow(edge)
+plt.subplot(235)
+plt.title('random walk')
+plt.imshow(M)
 
-subplot(236)
-title('gaussian edge')
-imshow(edgeG)
+plt.subplot(236)
+plt.title('random edge')
+plt.imshow(edgeM)
 
-show()
+ax = fig.add_subplot(234, projection='3d')
+ax.set_title('3D graph')
+Y = np.arange(M.shape[0])
+X = np.arange(M.shape[1])
+X, Y = np.meshgrid(X, Y)
+ax.plot_surface(X, Y, M, rstride=2, cstride=2, cmap=cm.YlGnBu_r, linewidth=0)
+
+
+plt.show()
 
