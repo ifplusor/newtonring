@@ -1,10 +1,12 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
 import sys
+import queue
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from matplotlib.patches import Circle
 from mpl_toolkits.mplot3d import Axes3D
 from skimage import feature, dtype_limits
 from PIL import Image
@@ -300,9 +302,110 @@ def traceEdge(row, col, thrLow, N, M):
             N[y][x] = 255
             traceEdge(y, x, thrLow, N, M)
 
+def findOnePoint(G):
+    height, width = G.shape
+    for row in range(height):
+        for col in range(width):
+            if G[row][col] == True:
+                return (row, col)
 
-def fixCircle(G):
-    pass
+def divideTips(G, thr):
+    height, width = G.shape
+    T = np.zeros_like(G, dtype=np.bool)
+    findx = -1
+    for row in range(height):
+        fmax = thr-1
+        for col in range(width):
+            if G[row][col]>=thr:
+                if G[row][col]>fmax:
+                    fmax = G[row][col]
+                    findx = col
+            else:
+                if fmax>=thr:
+                    T[row][findx] = True
+                    fmax = thr-1
+        if fmax>=thr:
+            T[row][findx] = True
+    
+    F = np.zeros_like(G, dtype=np.int)
+    C = np.array(T, copy=True)
+    tag = 1
+    que = queue.Queue()
+    point = findOnePoint(C)
+    while point != None:
+        que.put(point)
+        C[point[0]][point[1]] = False
+        F[point[0]][point[1]] = tag
+        while not que.empty():
+            y, x = que.get()
+            for i in range(-10, 10):
+                for j in range(-10, 10):
+                    if 0<=(y+i)<height and 0<=(x+j)<width and C[y+i][x+j]==True:
+                        que.put((y+i, x+j))
+                        C[y+i][x+j] = False
+                        F[y+i][x+j] = tag
+        point = findOnePoint(C)
+        tag += 1
+    return F
+
+
+def getTipList(G, tag):
+    height, width = G.shape
+    T = np.zeros_like(G, dtype=np.int)
+    l = []
+    for row in range(height):
+        for col in range(width):
+            if G[row][col] == tag:
+                T[row][col] = tag
+                l.append((float(row), float(col)))
+    return l, T
+
+
+def guessCenter(points):
+    pa = points[0]
+    pb = points[len(points)//2]
+    pc = points[len(points)-1]
+    t0x = (pa[0] + pb[0]) / 2.0
+    t0y = (pa[1] + pb[1]) / 2.0
+    a0 = (pa[0]-pb[0]) / (pa[1]-pb[1])
+    b0 = a0 * t0x - t0y
+    t1x = (pb[0] + pc[0]) / 2.0
+    t1y = (pb[1] + pc[1]) / 2.0
+    a1 = (pb[0]-pc[0]) / (pb[1]-pc[1])
+    b1 = a1 * t1x - t1y
+    x = (b1-b0) / (a0-a1)
+    y = a0*x + b0
+    return (x, y)
+
+
+def fixCircle(points, center=None):
+    a, b = (0.0, 0.0)
+    if center != None:
+        a, b = center
+    step = 0.0001
+    div = (len(points) * (len(points)-1)) / 2.0
+    while True:
+        da = 0.0
+        db = 0.0
+        cost = 0.0
+        for i in range(len(points)-1):
+            for j in range(i+1, len(points)):
+                xi, yi = points[i]
+                xj, yj = points[j]
+                da += (xi**2 - xj**2 + yi**2 - yj**2 + 2*a*(xj-xi) + 2*b*(yj-yi)) * (xj-xi)
+                db += (xi**2 - xj**2 + yi**2 - yj**2 + 2*a*(xj-xi) + 2*b*(yj-yi)) * (yj-yi)
+        da /= div
+        db /= div
+        if np.fabs(da)<0.0001 and np.fabs(db)<0.0001:
+            break
+        a -= da * step
+        b -= db * step
+    R = 0.0
+    for point in points:
+        R += (a-point[0])**2 + (b-point[1])**2
+    R /= len(points)
+    R = np.sqrt(R)
+    return (a, b), R
 
 
 origin = Image.open("huan128.jpg")
@@ -323,17 +426,24 @@ for k in range(g):
 
 tmax = np.max(M)
 tmin = np.min(M)
-tsum = np.sum(M)
-print("max is %f; min is %f; sum is %f" % (tmax, tmin, tsum))
+print("max is %f; min is %f" % (tmax, tmin))
+lowThr = np.percentile(M, 70)
+print("low thr is %f" % lowThr)
 
 M = M.reshape(T.shape)
 
-edgeM = feature.canny(M)
+edgeM = feature.canny(M, low_threshold=lowThr)
 edgeO = feature.canny(T)
 
+S = divideTips(M, lowThr)
+L, S1 = getTipList(S, 2)
+center = guessCenter(L)
+print("the center from guess is (%f, %f)" % (center[0], center[1]))
+center, R = fixCircle(L, center)
+print("center is (%f, %f)\nradius is %f" % (center[0], center[1], R))
 
 # show image
-fig = plt.figure()
+fig1 = plt.figure()
 
 plt.subplot(231)
 plt.title('origin image')
@@ -355,13 +465,31 @@ plt.subplot(236)
 plt.title('random edge')
 plt.imshow(edgeM)
 
-ax = fig.add_subplot(234, projection='3d')
+ax = fig1.add_subplot(234, projection='3d')
 ax.set_title('3D graph')
 Y = np.arange(M.shape[0])
 X = np.arange(M.shape[1])
 X, Y = np.meshgrid(X, Y)
 ax.plot_surface(X, Y, M, rstride=2, cstride=2, cmap=cm.YlGnBu_r, linewidth=0)
 
+
+fig2 = plt.figure()
+
+plt.subplot(221)
+plt.hist(M)
+
+plt.subplot(222)
+plt.imshow(S)
+
+plt.subplot(223)
+plt.imshow(S1)
+
+ax = fig2.add_subplot(224)
+cirl = Circle(center, radius=R, alpha=0.5)
+ax.add_patch(cirl)
+ax.plot(center[0], center[1], 'r.')
+ax.plot([p[0] for p in L], [p[1] for p in L], 'r,')
+plt.axis('scaled')
 
 plt.show()
 
