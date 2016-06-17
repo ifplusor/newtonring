@@ -26,20 +26,20 @@ def calTransProb(row, col, T, B, vec):
     for k in vec:
         d[k] = T[row+vector[k][0]][col+vector[k][1]] - T[row][col] # center pixl 
         if d[k] > 0: # light
-            b[k] = (256.0 - d[k]) / 6
+            b[k] = (256.0 - d[k]) / 3
         else: # dark
-            b[k] = (256.0 + d[k]) / 3
+            b[k] = (256.0 + d[k]) / 6
     
     # probability for out
     bsum = np.sum(b)
     for k in vec:
-        B[index][index + vector[k][0]*width + vector[k][1]] = b[k] / bsum
+        B[index][k] = b[k] / bsum
 
 
 def calTransMatrix(T):
     """计算转移概率矩阵"""
     height, width = T.shape
-    B = np.zeros((T.size, T.size))
+    B = np.zeros((T.size, 8))
     
     # calculate transfer matrix
     for j in range(1, width-1):
@@ -81,59 +81,59 @@ def mutipleTrans(M, B, shape):
             index = i*width+j
             for k in range(0,8):
                 aindex = index + vector[k][0]*width + vector[k][1]
-                t[index] += M[aindex] * B[aindex][index]
+                t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     i = 0
     for j in range(1, width-1):
         index = i*width+j
         for k in range(1,6): # top
             aindex = index + vector[k][0]*width + vector[k][1]
-            t[index] += M[aindex] * B[aindex][index]
+            t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     i = height-1
     for j in range(1, width-1):
         index = i*width+j
         for k in [5,6,7,0,1]: # bottom
             aindex = index + vector[k][0]*width + vector[k][1]
-            t[index] += M[aindex] * B[aindex][index]
+            t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     j = 0; 
     for i in range(1, height-1):
         index = i*width+j
         for k in range(3,8): # left
             aindex = index + vector[k][0]*width + vector[k][1]
-            t[index] += M[aindex] * B[aindex][index]
+            t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     i = 0
     index = i*width+j
     for k in range(3,6): # left-top
         aindex = index + vector[k][0]*width + vector[k][1]
-        t[index] += M[aindex] * B[aindex][index]
+        t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     i = height-1
     index = i*width+j
     for k in range(5,8): # left-bottom
         aindex = index + vector[k][0]*width + vector[k][1]
-        t[index] += M[aindex] * B[aindex][index]
+        t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     j = width-1
     for i in range(1, height-1):
         index = i*width+j
         for k in [7,0,1,2,3]: # right
             aindex = index + vector[k][0]*width + vector[k][1]
-            t[index] += M[aindex] * B[aindex][index]
+            t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     i = 0
     index = i*width+j
     for k in range(1,4): # right-top
         aindex = index + vector[k][0]*width + vector[k][1]
-        t[index] += M[aindex] * B[aindex][index]
+        t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     i = height-1
     index = i*width+j
     for k in [7,0,1]:    # right-bottom
         aindex = index + vector[k][0]*width + vector[k][1]
-        t[index] += M[aindex] * B[aindex][index]
+        t[index] += M[aindex] * B[aindex][(k+4)%8]
     
     return t
 
@@ -309,6 +309,7 @@ def findOnePoint(G):
             if G[row][col] == True:
                 return (row, col)
 
+
 def divideTips(G, thr):
     height, width = G.shape
     T = np.zeros_like(G, dtype=np.bool)
@@ -346,69 +347,53 @@ def divideTips(G, thr):
                         F[y+i][x+j] = tag
         point = findOnePoint(C)
         tag += 1
-    return F
-
-
-def getTipList(G, tag):
-    height, width = G.shape
-    T = np.zeros_like(G, dtype=np.int)
-    l = []
+    
+    L = []
+    for t in range(1, tag):
+        L.append([])
     for row in range(height):
         for col in range(width):
-            if G[row][col] == tag:
-                T[row][col] = tag
-                l.append((float(row), float(col)))
-    return l, T
+            if F[row][col] > 0:
+                L[F[row][col]-1].append((row, col))
+    
+    return F, L
 
 
-def guessCenter(points):
-    pa = points[0]
-    pb = points[len(points)//2]
-    pc = points[len(points)-1]
-    t0x = (pa[0] + pb[0]) / 2.0
-    t0y = (pa[1] + pb[1]) / 2.0
-    a0 = (pa[0]-pb[0]) / (pa[1]-pb[1])
-    b0 = a0 * t0x - t0y
-    t1x = (pb[0] + pc[0]) / 2.0
-    t1y = (pb[1] + pc[1]) / 2.0
-    a1 = (pb[0]-pc[0]) / (pb[1]-pc[1])
-    b1 = a1 * t1x - t1y
-    x = (b1-b0) / (a0-a1)
-    y = a0*x + b0
-    return (x, y)
-
-
-def fixCircle(points, center=None):
-    a, b = (0.0, 0.0)
-    if center != None:
-        a, b = center
-    step = 0.0001
-    div = (len(points) * (len(points)-1)) / 2.0
-    while True:
-        da = 0.0
-        db = 0.0
-        cost = 0.0
+def fixCircle(L):
+    xi = 0.0; yi = 0.0
+    xj = 0.0; yj = 0.0
+    ka = 0.0; kb = 0.0
+    la = 0.0; lb = 0.0
+    ma = 0.0; mb = 0.0
+    for points in L:
         for i in range(len(points)-1):
             for j in range(i+1, len(points)):
                 xi, yi = points[i]
                 xj, yj = points[j]
-                da += (xi**2 - xj**2 + yi**2 - yj**2 + 2*a*(xj-xi) + 2*b*(yj-yi)) * (xj-xi)
-                db += (xi**2 - xj**2 + yi**2 - yj**2 + 2*a*(xj-xi) + 2*b*(yj-yi)) * (yj-yi)
-        da /= div
-        db /= div
-        if np.fabs(da)<0.0001 and np.fabs(db)<0.0001:
-            break
-        a -= da * step
-        b -= db * step
-    R = 0.0
-    for point in points:
-        R += (a-point[0])**2 + (b-point[1])**2
-    R /= len(points)
-    R = np.sqrt(R)
+                ka += (xi**2 - xj**2 + yi**2 - yj**2) * (xj - xi)
+                kb += (xi**2 - xj**2 + yi**2 - yj**2) * (yj - yi)
+                la += 2 * (xj - xi) * (xj - xi)
+                lb += 2 * (xj - xi) * (yj - yi)
+                ma += 2 * (yj - yi) * (xj - xi)
+                mb += 2 * (yj - yi) * (yj - yi)
+    a = (ka*mb - kb*ma) / (lb*ma - la*mb)
+    b = -(ka + la*a) / ma
+    
+    R = []
+    for points in L:
+        r = 0.0
+        for point in points:
+            r += (a-point[0])**2 + (b-point[1])**2
+        r /= len(points)
+        r = np.sqrt(r)
+        R.append(r)
     return (a, b), R
 
 
-origin = Image.open("huan128.jpg")
+image = 'huan128.jpg'
+if len(sys.argv) > 2:
+    image = sys.argv[2]
+origin = Image.open(image)
 A = origin.convert("L") # convert origin image to grey-scale map
 
 T = np.array(A, dtype='d')
@@ -427,20 +412,19 @@ for k in range(g):
 tmax = np.max(M)
 tmin = np.min(M)
 print("max is %f; min is %f" % (tmax, tmin))
+
+M = 128 * (M - tmin) / (tmax - tmin)
+M = M.reshape(T.shape)
+
 lowThr = np.percentile(M, 70)
 print("low thr is %f" % lowThr)
-
-M = M.reshape(T.shape)
 
 edgeM = feature.canny(M, low_threshold=lowThr)
 edgeO = feature.canny(T)
 
-S = divideTips(M, lowThr)
-L, S1 = getTipList(S, 2)
-center = guessCenter(L)
-print("the center from guess is (%f, %f)" % (center[0], center[1]))
-center, R = fixCircle(L, center)
-print("center is (%f, %f)\nradius is %f" % (center[0], center[1], R))
+S, L = divideTips(M, lowThr)
+center, R = fixCircle(L)
+print("center is (%f, %f)" % (center[0], center[1]))
 
 # show image
 fig1 = plt.figure()
@@ -451,21 +435,23 @@ plt.imshow(origin)
 
 plt.subplot(232)
 plt.title('grey-scale map')
-plt.imshow(A)
+plt.imshow(A, cmap=cm.gray)
 
 plt.subplot(233)
 plt.title('origin edge')
-plt.imshow(edgeO)
+plt.imshow(edgeO, cmap=cm.gray_r)
 
 plt.subplot(235)
 plt.title('random walk')
-plt.imshow(M)
+plt.imshow(M, cmap=cm.gray)
 
 plt.subplot(236)
 plt.title('random edge')
-plt.imshow(edgeM)
+plt.imshow(edgeM, cmap=cm.gray_r)
 
-ax = fig1.add_subplot(234, projection='3d')
+#ax = fig1.add_subplot(234, projection='3d')
+fig2 = plt.figure()
+ax = fig2.add_subplot(111, projection='3d')
 ax.set_title('3D graph')
 Y = np.arange(M.shape[0])
 X = np.arange(M.shape[1])
@@ -473,7 +459,7 @@ X, Y = np.meshgrid(X, Y)
 ax.plot_surface(X, Y, M, rstride=2, cstride=2, cmap=cm.YlGnBu_r, linewidth=0)
 
 
-fig2 = plt.figure()
+fig3 = plt.figure()
 
 plt.subplot(221)
 plt.hist(M)
@@ -481,14 +467,13 @@ plt.hist(M)
 plt.subplot(222)
 plt.imshow(S)
 
-plt.subplot(223)
-plt.imshow(S1)
-
-ax = fig2.add_subplot(224)
-cirl = Circle(center, radius=R, alpha=0.5)
-ax.add_patch(cirl)
+ax = fig3.add_subplot(223)
+for r in R:
+    cirl = Circle(center, radius=r, alpha=0.5)
+    ax.add_patch(cirl)
 ax.plot(center[0], center[1], 'r.')
-ax.plot([p[0] for p in L], [p[1] for p in L], 'r,')
+for points in L:
+    ax.plot([p[0] for p in points], [p[1] for p in points], 'r,')
 plt.axis('scaled')
 
 plt.show()

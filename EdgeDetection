@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+
+import sys
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from mpl_toolkits.mplot3d import Axes3D
+from skimage import feature
+from PIL import Image
+
+imageName = "huan128.jpg"
+if len(sys.argv) > 1:
+    imageName = sys.argv[1]
+
+origin = Image.open(imageName)
+A = origin.convert('L')
+
+T = np.array(A, dtype='d')
+edge = feature.canny(T)
+
+plt.subplot(121)
+plt.title('grep-scale map')
+plt.imshow(A, cmap=cm.gray)
+
+plt.subplot(122)
+plt.title('edge')
+plt.imshow(edge, cmap=cm.gray_r)
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.set_title('3D graph')
+X = np.arange(T.shape[0])
+Y = np.arange(T.shape[1])
+X, Y = np.meshgrid(X, Y)
+ax.plot_surface(X, Y, T, rstride=2, cstride=2, cmap=cm.YlGnBu_r, linewidth=0)
+
+plt.show()
